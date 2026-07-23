@@ -1,0 +1,157 @@
+[[case]]
+name = "ss_to_clash"
+target = "clash"
+input = "input/ss.txt"
+config = "config/minimal.ini"
+golden = "golden/full/ss.clash.yml"
+
+[[case]]
+name = "ss_to_clashr"
+target = "clashr"
+input = "input/ss.txt"
+config = "config/minimal.ini"
+golden = "golden/full/ss.clashr.yml"
+
+[[case]]
+name = "ss_to_quan"
+target = "quan"
+input = "input/ss.txt"
+config = "config/minimal.ini"
+golden = "golden/full/ss.quan.conf"
+
+[[case]]
+name = "ss_to_quanx"
+target = "quanx"
+input = "input/ss.txt"
+config = "config/minimal.ini"
+golden = "golden/full/ss.quanx.conf"
+
+[[case]]
+name = "ss_to_loon"
+target = "loon"
+input = "input/ss.txt"
+config = "config/minimal.ini"
+golden = "golden/full/ss.loon.conf"
+
+[[case]]
+name = "ss_to_ss"
+target = "ss"
+input = "input/ss.txt"
+config = "config/minimal.ini"
+golden = "golden/full/ss.ss.txt"
+
+[[case]]
+name = "ss_to_sssub"
+target = "sssub"
+input = "input/ss.txt"
+config = "config/minimal.ini"
+golden = "golden/full/ss.sssub.txt"
+
+[[case]]
+name = "ss_to_ssd"
+target = "ssd"
+input = "input/ss.txt"
+config = "config/minimal.ini"
+golden = "golden/full/ss.ssd.txt"
+
+[[case]]
+name = "ss_to_ssr"
+target = "ssr"
+input = "input/ss.txt"
+config = "config/minimal.ini"
+golden = "golden/full/ss.ssr.txt"
+
+[[case]]
+name = "ss_to_surfboard"
+target = "surfboard"
+input = "input/ss.txt"
+config = "config/minimal.ini"
+golden = "golden/full/ss.surfboard.conf"
+
+[[case]]
+name = "ss_to_surge_v2"
+target = "surge"
+surge_version = 2
+input = "input/ss.txt"
+config = "config/minimal.ini"
+golden = "golden/full/ss.surge-v2.conf"
+
+[[case]]
+name = "ss_to_surge_v3"
+target = "surge"
+surge_version = 3
+input = "input/ss.txt"
+config = "config/minimal.ini"
+golden = "golden/full/ss.surge-v3.conf"
+
+[[case]]
+name = "ss_to_surge_v4"
+target = "surge"
+surge_version = 4
+input = "input/ss.txt"
+config = "config/minimal.ini"
+golden = "golden/full/ss.surge-v4.conf"
+
+[[case]]
+name = "ss_to_v2ray"
+target = "v2ray"
+input = "input/ss.txt"
+config = "config/minimal.ini"
+golden = "golden/full/ss.v2ray.txt"
+
+[[case]]
+name = "ss_to_trojan"
+target = "trojan"
+input = "input/ss.txt"
+config = "config/minimal.ini"
+golden = "golden/full/ss.trojan.txt"
+
+[[case]]
+name = "ss_to_mixed"
+target = "mixed"
+input = "input/ss.txt"
+config = "config/minimal.ini"
+golden = "golden/full/ss.mixed.txt"
+
+[[case]]
+name = "ss_to_mellow"
+target = "mellow"
+input = "input/ss.txt"
+config = "config/minimal.ini"
+golden = "golden/full/ss.mellow.conf"
+
+[[case]]
+name = "ss_to_singbox"
+target = "singbox"
+input = "input/ss.txt"
+config = "config/minimal.ini"
+golden = "golden/full/ss.singbox.json"
+
+[[case]]
+name = "protocol_matrix_to_clash"
+target = "clash"
+input = "input/protocols.txt"
+config = "config/minimal.ini"
+golden = "golden/full/protocols.clash.yml"
+
+[[case]]
+name = "protocol_matrix_to_surge_v4"
+target = "surge"
+surge_version = 4
+input = "input/protocols.txt"
+config = "config/minimal.ini"
+golden = "golden/full/protocols.surge-v4.conf"
+
+[[case]]
+name = "protocol_matrix_to_singbox"
+target = "singbox"
+input = "input/protocols.txt"
+config = "config/minimal.ini"
+golden = "golden/full/protocols.singbox.json"
+
+[[case]]
+name = "protocol_matrix_to_mixed"
+target = "mixed"
+input = "input/protocols.txt"
+config = "config/minimal.ini"
+golden = "golden/full/protocols.mixed.txt"

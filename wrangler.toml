@@ -1,0 +1,13 @@
+name = "subconverter-rs"
+main = "crates/subconverter-worker/build/worker/shim.mjs"
+compatibility_date = "2026-06-03"
+
+[build]
+command = "cargo install -q worker-build --version 0.8.3 && worker-build --release . --features cloudflare"
+cwd = "crates/subconverter-worker"
+watch_dir = ["crates/subconverter-worker/src", "crates/subconverter-core/src"]
+
+[vars]
+ASSET_KV_BINDING = "ASSETS"
+CONFIG_KV_BINDING = "CONFIG"
+CACHE_KV_BINDING = "CONFIG"

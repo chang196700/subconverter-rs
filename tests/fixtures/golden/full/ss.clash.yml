@@ -1,0 +1,9 @@
+Proxy:
+  - {name: Example, server: example.com, port: 8388, type: ss, cipher: aes-128-gcm, password: pass}
+Proxy Group:
+  - name: Proxy
+    type: select
+    proxies:
+      - Example
+Rule:
+  - MATCH,Proxy

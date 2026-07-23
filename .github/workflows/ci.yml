@@ -1,0 +1,54 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  rust:
+    name: Rust (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            core-targets: x86_64-unknown-linux-gnu,wasm32-unknown-unknown
+          - os: windows-latest
+            core-targets: x86_64-pc-windows-msvc,wasm32-unknown-unknown
+          - os: macos-latest
+            core-targets: x86_64-apple-darwin,wasm32-unknown-unknown
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.core-targets }}
+      - uses: Swatinem/rust-cache@v2
+      - name: Format
+        run: cargo fmt --all -- --check
+      - name: Check workspace
+        run: cargo check --workspace
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: Test workspace
+        run: cargo test --workspace
+      - name: Validate full golden manifest
+        shell: pwsh
+        run: ./tools/generate-golden.ps1 -Manifest cases.full.toml -ValidateOnly
+      - name: Check core std targets
+        shell: pwsh
+        run: ./tools/check-core-std-targets.ps1 -Target ${{ matrix.core-targets }}
+      - name: Check Cloudflare Worker build target
+        run: cargo check -p subconverter-worker --target wasm32-unknown-unknown --features cloudflare
+      - name: Server smoke
+        shell: pwsh
+        run: ./tools/smoke-server.ps1
+
+  container:
+    name: Container smoke
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build and smoke test container
+        shell: pwsh
+        run: ./tools/smoke-container.ps1

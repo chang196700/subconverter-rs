@@ -1,0 +1,21 @@
+[package]
+name = "subconverter-server"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "subconverter-server"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+async-trait.workspace = true
+axum = "0.7"
+chrono = "0.4"
+cron = "0.17"
+http.workspace = true
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "charset", "json"] }
+serde_json.workspace = true
+subconverter-core = { path = "../subconverter-core", features = ["quickjs"] }
+tokio.workspace = true

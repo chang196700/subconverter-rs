@@ -1,0 +1,11 @@
+target/
+work/
+outputs/
+tests/
+crates/subconverter-worker/build/
+.git/
+.agents/
+.codex/
+*.tmp
+*.log
+*.pid

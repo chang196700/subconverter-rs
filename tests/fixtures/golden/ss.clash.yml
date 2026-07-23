@@ -1,0 +1,16 @@
+---
+proxies:
+- cipher: aes-128-gcm
+  name: Example
+  password: pass
+  port: 8388
+  server: example.com
+  type: ss
+proxy-groups:
+- name: Proxy
+  proxies:
+  - Example
+  type: select
+rules:
+- MATCH,Proxy
+

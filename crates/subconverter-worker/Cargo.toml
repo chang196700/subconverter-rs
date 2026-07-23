@@ -1,0 +1,17 @@
+[package]
+name = "subconverter-worker"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+async-trait.workspace = true
+subconverter-core = { path = "../subconverter-core" }
+worker = { version = "0.8.3", optional = true }
+
+[features]
+default = []
+cloudflare = ["worker"]

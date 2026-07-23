@@ -1,0 +1,6 @@
+[[case]]
+name = "ss_to_clash_smoke"
+target = "clash"
+input = "input/ss.txt"
+golden = "golden/ss.clash.yml"
+

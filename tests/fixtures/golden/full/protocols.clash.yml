@@ -1,0 +1,19 @@
+Proxy:
+  - {name: SS, server: ss.example.com, port: 8388, type: ss, cipher: aes-128-gcm, password: ss-pass}
+  - {name: SSR, server: ssr.example.com, port: 8389, type: ssr, cipher: aes-128-cfb, password: ssr-pass, protocol: auth_sha1_v4, obfs: tls1.2_ticket_auth, protocol-param: "", obfs-param: ""}
+  - {name: VMess, server: vmess.example.com, port: 443, type: vmess, uuid: 00000000-0000-0000-0000-000000000001, alterId: 0, cipher: auto, tls: true, servername: tls.example.com, network: ws, ws-path: /ws, ws-headers: {Host: ws.example.com}}
+  - {name: Trojan, server: trojan.example.com, port: 443, type: trojan, password: trojan-pass, sni: trojan.example.com}
+  - {name: http.example.com:8080, server: http.example.com, port: 8080, type: http, username: http-user, password: http-pass, tls: false}
+  - {name: socks.example.com:1080, server: socks.example.com, port: 1080, type: socks5, username: socks-user, password: socks-pass}
+Proxy Group:
+  - name: Proxy
+    type: select
+    proxies:
+      - SS
+      - SSR
+      - VMess
+      - Trojan
+      - http.example.com:8080
+      - socks.example.com:1080
+Rule:
+  - MATCH,Proxy

@@ -1,0 +1,68 @@
+proxies:
+  - name: SS
+    type: ss
+    server: ss.example.com
+    port: 8388
+    cipher: aes-128-gcm
+    password: ss-pass
+  - name: SSR
+    type: ssr
+    server: ssr.example.com
+    port: 8389
+    cipher: aes-128-cfb
+    password: ssr-pass
+    protocol: auth_sha1_v4
+    protocol-param: ""
+    obfs: tls1.2_ticket_auth
+    obfs-param: ""
+  - name: VMess
+    type: vmess
+    server: vmess.example.com
+    port: 443
+    uuid: 00000000-0000-0000-0000-000000000001
+    alterId: 0
+    cipher: auto
+    network: ws
+    tls: true
+    servername: tls.example.com
+    ws-opts:
+      path: /ws
+      headers:
+        Host: ws.example.com
+  - name: Trojan
+    type: trojan
+    server: trojan.example.com
+    port: 443
+    password: trojan-pass
+    sni: trojan.example.com
+  - name: Snell
+    type: snell
+    server: snell.example.com
+    port: 44046
+    psk: snell-pass
+    version: 3
+    obfs-opts:
+      mode: http
+      host: obfs.example.com
+  - name: WireGuard
+    type: wireguard
+    server: wg.example.com
+    port: 51820
+    ip: 172.16.0.2/32
+    private-key: private
+    public-key: public
+    pre-shared-key: psk
+    dns: [1.1.1.1]
+    mtu: 1280
+  - name: HTTP
+    type: http
+    server: http.example.com
+    port: 8080
+    username: http-user
+    password: http-pass
+  - name: SOCKS5
+    type: socks5
+    server: socks.example.com
+    port: 1080
+    username: socks-user
+    password: socks-pass
