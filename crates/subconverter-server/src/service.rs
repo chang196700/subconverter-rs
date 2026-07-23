@@ -15,6 +15,7 @@ use service_manager::{
 #[cfg(not(windows))]
 use service_manager::{ServiceStatus, ServiceStatusCtx};
 
+#[cfg(not(target_os = "macos"))]
 pub const WINDOWS_SERVICE_NAME: &str = "subconverter-rs";
 #[cfg(target_os = "linux")]
 pub const SYSTEMD_SERVICE_NAME: &str = "subconverter-rs.service";
@@ -919,31 +920,18 @@ fn apply_permissions(scope: Scope, paths: &ServicePaths) -> Result<()> {
                 Command::new("chown").args(["-R", account, &paths.data.to_string_lossy()]),
                 "set data ownership",
             )?;
+            #[cfg(target_os = "linux")]
+            let base_owner = "root:root";
+            #[cfg(target_os = "macos")]
+            let base_owner = "root:wheel";
             run_checked(
                 Command::new("chown").args([
                     "-R",
-                    "root:wheel",
+                    base_owner,
                     &paths.data.join("base").to_string_lossy(),
                 ]),
                 "set base ownership",
-            )
-            .or_else(|_error| {
-                #[cfg(target_os = "linux")]
-                {
-                    run_checked(
-                        Command::new("chown").args([
-                            "-R",
-                            "root:root",
-                            &paths.data.join("base").to_string_lossy(),
-                        ]),
-                        "set base ownership",
-                    )
-                }
-                #[cfg(not(target_os = "linux"))]
-                {
-                    Err(_error)
-                }
-            })?;
+            )?;
             run_checked(
                 Command::new("chmod").args([
                     "-R",
