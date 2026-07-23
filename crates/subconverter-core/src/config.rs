@@ -1144,17 +1144,17 @@ fn yaml_import_context(previous_lines: &[String]) -> YamlImportContext {
             "rename_node:" => return YamlImportContext::RenameNode,
             "rulesets:" => return YamlImportContext::Ruleset,
             "emojis:" => in_emojis = true,
-            "rules:" if in_emojis => return YamlImportContext::Emoji,
-            "rules:" => {
-                if previous_lines
-                    .iter()
-                    .rev()
-                    .skip_while(|candidate| candidate.trim() != "rules:")
-                    .any(|candidate| candidate.trim() == "emojis:")
-                {
-                    return YamlImportContext::Emoji;
-                }
+            "rules:"
+                if in_emojis
+                    || previous_lines
+                        .iter()
+                        .rev()
+                        .skip_while(|candidate| candidate.trim() != "rules:")
+                        .any(|candidate| candidate.trim() == "emojis:") =>
+            {
+                return YamlImportContext::Emoji;
             }
+            "rules:" => {}
             _ => {}
         }
     }

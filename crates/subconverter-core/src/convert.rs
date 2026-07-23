@@ -2233,18 +2233,16 @@ fn add_clash_transport_options(
                 entry.insert("h2-opts".to_string(), serde_json::Value::Object(h2_opts));
             }
         }
-        "grpc" => {
-            if !node.path.is_empty() {
-                let mut grpc_opts = serde_json::Map::new();
-                grpc_opts.insert(
-                    "grpc-service-name".to_string(),
-                    serde_json::Value::String(node.path.clone()),
-                );
-                entry.insert(
-                    "grpc-opts".to_string(),
-                    serde_json::Value::Object(grpc_opts),
-                );
-            }
+        "grpc" if !node.path.is_empty() => {
+            let mut grpc_opts = serde_json::Map::new();
+            grpc_opts.insert(
+                "grpc-service-name".to_string(),
+                serde_json::Value::String(node.path.clone()),
+            );
+            entry.insert(
+                "grpc-opts".to_string(),
+                serde_json::Value::Object(grpc_opts),
+            );
         }
         _ => {}
     }
