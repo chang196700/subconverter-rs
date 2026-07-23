@@ -331,11 +331,11 @@ impl PlatformIo for CliIo {
                 .resolve_to_addrs(host, &addresses)
                 .build()
                 .map_err(|err| Error::Io(err.to_string()))?;
-            let mut response = client
-                .get(current.clone())
-                .send()
-                .await
-                .map_err(map_reqwest_error)?;
+            let mut outgoing = client.get(current.clone());
+            for (key, value) in &request.headers {
+                outgoing = outgoing.header(key, value);
+            }
+            let mut response = outgoing.send().await.map_err(map_reqwest_error)?;
             let status = response.status();
             if status.is_redirection() {
                 if redirect_count == request.max_redirects {
