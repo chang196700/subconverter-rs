@@ -1,12 +1,14 @@
 use std::collections::BTreeMap;
 use std::fs;
+use std::future::IntoFuture;
 use std::net::{IpAddr, Ipv6Addr, SocketAddr};
-use std::path::{Component, Path};
+use std::path::{Component, Path, PathBuf};
+use std::process::ExitCode;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use async_trait::async_trait;
 use axum::body::Bytes;
 use axum::extract::State;
@@ -14,12 +16,45 @@ use axum::http::{HeaderMap, Method as AxumMethod, Uri};
 use axum::response::Response;
 use axum::routing::{get, post};
 use axum::Router;
+use clap::{Args, Parser, Subcommand};
 use http::StatusCode;
 use subconverter_core::{
     execute_background_script, expand_imports_with, handle_request, AdapterCapabilities,
     CoreRequest, Error, FetchRequest, FetchedContent, Method, PlatformIo, Settings,
 };
-use tokio::sync::RwLock;
+use tokio::sync::{watch, RwLock};
+
+mod service;
+#[cfg(windows)]
+mod windows_service_host;
+
+const GRACEFUL_SHUTDOWN_LIMIT: Duration = Duration::from_secs(30);
+
+#[derive(Debug, Parser)]
+#[command(name = "subconverter-server", version, about)]
+struct Cli {
+    #[command(subcommand)]
+    command: Option<Command>,
+}
+
+#[derive(Debug, Subcommand)]
+enum Command {
+    /// Run the HTTP server in the foreground.
+    Serve(ServeArgs),
+    /// Install and control the native operating-system service.
+    Service(service::ServiceArgs),
+    /// Internal Windows SCM entrypoint.
+    #[cfg(windows)]
+    #[command(name = "service-run", hide = true)]
+    ServiceRun(ServeArgs),
+}
+
+#[derive(Debug, Clone, Args)]
+struct ServeArgs {
+    /// Directory containing pref.*, base/, profiles/, scripts/, and logs/.
+    #[arg(long)]
+    data_dir: Option<PathBuf>,
+}
 
 #[derive(Clone)]
 struct AppState {
@@ -27,11 +62,104 @@ struct AppState {
     io: FsIo,
 }
 
-#[tokio::main]
-async fn main() -> Result<()> {
+fn main() -> ExitCode {
+    match dispatch(Cli::parse()) {
+        Ok(code) => ExitCode::from(code),
+        Err(error) => {
+            eprintln!("subconverter-server: {error:#}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+fn dispatch(cli: Cli) -> Result<u8> {
+    match cli.command {
+        Some(Command::Service(args)) => service::execute(args),
+        #[cfg(windows)]
+        Some(Command::ServiceRun(args)) => {
+            windows_service_host::run(args.data_dir)?;
+            Ok(0)
+        }
+        Some(Command::Serve(args)) => {
+            init_stderr_logging();
+            run_foreground(args.data_dir)?;
+            Ok(0)
+        }
+        None => {
+            init_stderr_logging();
+            run_foreground(None)?;
+            Ok(0)
+        }
+    }
+}
+
+fn init_stderr_logging() {
+    let filter = tracing_subscriber::EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
+    let _ = tracing_subscriber::fmt().with_env_filter(filter).try_init();
+}
+
+fn run_foreground(data_dir: Option<PathBuf>) -> Result<()> {
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .context("failed to create async runtime")?;
+    let result = runtime.block_on(run_server(data_dir, shutdown_signal(), |_| Ok(())));
+    runtime.shutdown_timeout(Duration::ZERO);
+    result
+}
+
+async fn shutdown_signal() {
+    #[cfg(unix)]
+    {
+        let terminate = async {
+            match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
+                Ok(mut stream) => {
+                    stream.recv().await;
+                }
+                Err(error) => {
+                    tracing::warn!("failed to register SIGTERM handler: {error}");
+                    std::future::pending::<()>().await;
+                }
+            }
+        };
+        tokio::select! {
+            result = tokio::signal::ctrl_c() => {
+                if let Err(error) = result {
+                    tracing::warn!("CTRL-C handler failed: {error}");
+                }
+            }
+            _ = terminate => {}
+        }
+    }
+    #[cfg(not(unix))]
+    if let Err(error) = tokio::signal::ctrl_c().await {
+        tracing::warn!("CTRL-C handler failed: {error}");
+    }
+}
+
+pub(crate) async fn run_server<S, R>(data_dir: Option<PathBuf>, shutdown: S, ready: R) -> Result<()>
+where
+    S: std::future::Future<Output = ()> + Send + 'static,
+    R: FnOnce(SocketAddr) -> Result<()> + Send + 'static,
+{
+    if let Some(data_dir) = data_dir {
+        fs::create_dir_all(&data_dir)
+            .with_context(|| format!("failed to create data directory {}", data_dir.display()))?;
+        std::env::set_current_dir(&data_dir)
+            .with_context(|| format!("failed to use data directory {}", data_dir.display()))?;
+    }
+
     let mut settings = load_pref();
     settings.apply_env(|key| std::env::var(key).ok());
+    run_server_with_settings(settings, shutdown, ready).await
+}
 
+async fn run_server_with_settings<S, R>(settings: Settings, shutdown: S, ready: R) -> Result<()>
+where
+    S: std::future::Future<Output = ()> + Send + 'static,
+    R: FnOnce(SocketAddr) -> Result<()> + Send + 'static,
+{
     let addr: SocketAddr = format!("{}:{}", settings.listen, settings.port).parse()?;
     let state = AppState {
         settings: Arc::new(RwLock::new(settings)),
@@ -54,15 +182,52 @@ async fn main() -> Result<()> {
         .route("/getlocal", get(adapter))
         .with_state(state.clone());
 
-    start_cron_manager(state);
+    let (cron_shutdown_tx, cron_shutdown_rx) = watch::channel(false);
+    let cron_manager = start_cron_manager(state, cron_shutdown_rx);
+    let cron_abort = cron_manager.abort_handle();
 
     let listener = tokio::net::TcpListener::bind(addr).await?;
-    eprintln!(
-        "Startup completed. Serving HTTP @ http://{}",
-        listener.local_addr()?
-    );
-    axum::serve(listener, app).await?;
-    Ok(())
+    let local_addr = listener.local_addr()?;
+    ready(local_addr)?;
+    tracing::info!("Startup completed. Serving HTTP @ http://{}", local_addr);
+    let (shutdown_started_tx, mut shutdown_started_rx) = tokio::sync::oneshot::channel();
+    let graceful = async move {
+        shutdown.await;
+        let _ = shutdown_started_tx.send(());
+    };
+    let server = axum::serve(listener, app)
+        .with_graceful_shutdown(graceful)
+        .into_future();
+    tokio::pin!(server);
+
+    tokio::select! {
+        result = &mut server => {
+            let _ = cron_shutdown_tx.send(true);
+            let _ = tokio::time::timeout(GRACEFUL_SHUTDOWN_LIMIT, cron_manager).await;
+            result.context("HTTP server failed")
+        }
+        _ = &mut shutdown_started_rx => {
+            tracing::info!("shutdown requested; draining HTTP and background tasks");
+            let _ = cron_shutdown_tx.send(true);
+            match tokio::time::timeout(GRACEFUL_SHUTDOWN_LIMIT, async {
+                let (server_result, cron_result) = tokio::join!(&mut server, cron_manager);
+                server_result.context("HTTP server failed")?;
+                if let Err(error) = cron_result {
+                    if !error.is_cancelled() {
+                        return Err(error).context("cron manager failed");
+                    }
+                }
+                Ok(())
+            }).await {
+                Ok(result) => result,
+                Err(_) => {
+                    cron_abort.abort();
+                    tracing::warn!("graceful shutdown exceeded 30 seconds");
+                    Ok(())
+                }
+            }
+        }
+    }
 }
 
 async fn adapter(
@@ -342,11 +507,17 @@ impl PlatformIo for FsIo {
     }
 }
 
-fn start_cron_manager(state: AppState) {
+fn start_cron_manager(
+    state: AppState,
+    mut shutdown: watch::Receiver<bool>,
+) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
         let mut active = Vec::<tokio::task::JoinHandle<()>>::new();
         let mut last_tasks = None;
         loop {
+            if *shutdown.borrow() {
+                break;
+            }
             let settings = state.settings.read().await.clone();
             let task_state = (
                 settings.enable_cron,
@@ -362,13 +533,15 @@ fn start_cron_manager(state: AppState) {
                     for task in settings.cron_tasks.clone() {
                         let io = state.io.clone();
                         let task_settings = settings.clone();
+                        let mut task_shutdown = shutdown.clone();
                         active.push(tokio::spawn(async move {
                             let schedule = match cron::Schedule::from_str(&task.cron_exp) {
                                 Ok(schedule) => schedule,
                                 Err(err) => {
-                                    eprintln!(
+                                    tracing::warn!(
                                         "cron task '{}' has invalid expression '{}': {err}",
-                                        task.name, task.cron_exp
+                                        task.name,
+                                        task.cron_exp
                                     );
                                     return;
                                 }
@@ -380,16 +553,26 @@ fn start_cron_manager(state: AppState) {
                                 let delay = (next - chrono::Utc::now())
                                     .to_std()
                                     .unwrap_or(Duration::ZERO);
-                                tokio::time::sleep(delay).await;
-                                let script = match load_cron_script(&io, &task_settings, &task.path)
-                                    .await
-                                {
-                                    Ok(script) => script,
-                                    Err(err) => {
-                                        eprintln!("cron task '{}' load failed: {err}", task.name);
+                                tokio::select! {
+                                    _ = tokio::time::sleep(delay) => {}
+                                    changed = task_shutdown.changed() => {
+                                        if changed.is_err() || *task_shutdown.borrow() {
+                                            return;
+                                        }
                                         continue;
                                     }
-                                };
+                                }
+                                let script =
+                                    match load_cron_script(&io, &task_settings, &task.path).await {
+                                        Ok(script) => script,
+                                        Err(err) => {
+                                            tracing::warn!(
+                                                "cron task '{}' load failed: {err}",
+                                                task.name
+                                            );
+                                            continue;
+                                        }
+                                    };
                                 let execution_settings = task_settings.clone();
                                 let timeout_millis = if task.timeout > 0 {
                                     (task.timeout as u64).saturating_mul(1_000)
@@ -408,10 +591,10 @@ fn start_cron_manager(state: AppState) {
                                 {
                                     Ok(Ok(())) => {}
                                     Ok(Err(err)) => {
-                                        eprintln!("cron task '{name}' execution failed: {err}")
+                                        tracing::warn!("cron task '{name}' execution failed: {err}")
                                     }
                                     Err(err) => {
-                                        eprintln!("cron task '{name}' worker failed: {err}")
+                                        tracing::warn!("cron task '{name}' worker failed: {err}")
                                     }
                                 }
                             }
@@ -420,9 +603,19 @@ fn start_cron_manager(state: AppState) {
                 }
                 last_tasks = Some(task_state);
             }
-            tokio::time::sleep(Duration::from_secs(5)).await;
+            tokio::select! {
+                _ = tokio::time::sleep(Duration::from_secs(5)) => {}
+                changed = shutdown.changed() => {
+                    if changed.is_err() || *shutdown.borrow() {
+                        break;
+                    }
+                }
+            }
         }
-    });
+        for task in active {
+            task.abort();
+        }
+    })
 }
 
 async fn load_cron_script(
@@ -755,4 +948,92 @@ fn write_simple_ini(ini: &BTreeMap<String, BTreeMap<String, String>>) -> String 
         output.push('\n');
     }
     output
+}
+
+#[cfg(test)]
+mod cli_tests {
+    use super::*;
+
+    #[test]
+    fn no_arguments_preserve_foreground_mode() {
+        let cli = Cli::try_parse_from(["subconverter-server"]).expect("parse");
+        assert!(cli.command.is_none());
+    }
+
+    #[test]
+    fn service_install_parses_scope_paths_and_no_start() {
+        let cli = Cli::try_parse_from([
+            "subconverter-server",
+            "service",
+            "install",
+            "--scope",
+            "system",
+            "--data-dir",
+            "state",
+            "--asset-dir",
+            "release",
+            "--no-start",
+        ])
+        .expect("parse");
+        let Some(Command::Service(service::ServiceArgs {
+            command: service::ServiceCommand::Install(args),
+        })) = cli.command
+        else {
+            panic!("expected service install");
+        };
+        assert_eq!(args.scope, service::Scope::System);
+        assert_eq!(args.data_dir, Some(PathBuf::from("state")));
+        assert_eq!(args.asset_dir, Some(PathBuf::from("release")));
+        assert!(args.no_start);
+    }
+
+    #[tokio::test]
+    async fn cron_manager_obeys_shutdown_signal() {
+        let state = AppState {
+            settings: Arc::new(RwLock::new(Settings::default())),
+            io: FsIo::default(),
+        };
+        let (shutdown_tx, shutdown_rx) = watch::channel(false);
+        let manager = start_cron_manager(state, shutdown_rx);
+        shutdown_tx.send(true).expect("send shutdown");
+        tokio::time::timeout(Duration::from_secs(1), manager)
+            .await
+            .expect("cron manager should stop")
+            .expect("cron manager join");
+    }
+
+    #[tokio::test]
+    async fn occupied_port_fails_before_reporting_ready() {
+        let occupied = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("occupy port");
+        let settings = Settings {
+            port: occupied.local_addr().expect("local address").port(),
+            ..Settings::default()
+        };
+        let ready = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let ready_flag = Arc::clone(&ready);
+        let result = run_server_with_settings(settings, std::future::pending(), move |_| {
+            ready_flag.store(true, std::sync::atomic::Ordering::SeqCst);
+            Ok(())
+        })
+        .await;
+        assert!(result.is_err());
+        assert!(!ready.load(std::sync::atomic::Ordering::SeqCst));
+    }
+
+    #[tokio::test]
+    async fn shutdown_drains_server_and_cron_manager() {
+        let settings = Settings {
+            port: 0,
+            ..Settings::default()
+        };
+        let result = tokio::time::timeout(
+            Duration::from_secs(1),
+            run_server_with_settings(settings, async {}, |_| Ok(())),
+        )
+        .await
+        .expect("shutdown should finish promptly");
+        result.expect("graceful shutdown");
+    }
 }

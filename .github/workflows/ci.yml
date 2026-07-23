@@ -52,3 +52,64 @@ jobs:
       - name: Build and smoke test container
         shell: pwsh
         run: ./tools/smoke-container.ps1
+
+  native-service:
+    name: Native service (${{ matrix.target }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: windows-2025
+            target: x86_64-pc-windows-msvc
+            family: windows
+          - runner: windows-11-arm
+            target: aarch64-pc-windows-msvc
+            family: windows
+          - runner: ubuntu-24.04
+            target: x86_64-unknown-linux-gnu
+            family: linux
+          - runner: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+            family: linux
+          - runner: macos-15-intel
+            target: x86_64-apple-darwin
+            family: macos
+          - runner: macos-15
+            target: aarch64-apple-darwin
+            family: macos
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: native-service-${{ matrix.target }}
+      - name: Verify native architecture
+        shell: pwsh
+        run: |
+          $hostTriple = (rustc -vV | Select-String '^host:').Line.Split(':', 2)[1].Trim()
+          if ($hostTriple -ne '${{ matrix.target }}') {
+            throw "runner host $hostTriple does not match ${{ matrix.target }}"
+          }
+      - name: Build native server
+        run: cargo build --release -p subconverter-server
+      - name: Windows SCM smoke
+        if: matrix.family == 'windows'
+        shell: pwsh
+        run: ./tools/smoke-service.ps1 -Scope system
+      - name: Linux systemd smoke
+        if: matrix.family == 'linux'
+        shell: pwsh
+        run: sudo env "PATH=$env:PATH" pwsh ./tools/smoke-service.ps1 -Scope system
+      - name: Linux systemd user smoke
+        if: matrix.family == 'linux'
+        shell: pwsh
+        run: ./tools/smoke-service.ps1 -Scope user
+      - name: macOS launchd smoke
+        if: matrix.family == 'macos'
+        shell: pwsh
+        run: sudo env "PATH=$env:PATH" pwsh ./tools/smoke-service.ps1 -Scope system
+      - name: macOS LaunchAgent smoke
+        if: matrix.family == 'macos'
+        shell: pwsh
+        run: ./tools/smoke-service.ps1 -Scope user

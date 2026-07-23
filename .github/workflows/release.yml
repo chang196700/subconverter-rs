@@ -1,0 +1,93 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  package:
+    name: Package ${{ matrix.target }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: windows-2025
+            target: x86_64-pc-windows-msvc
+            format: zip
+          - runner: windows-11-arm
+            target: aarch64-pc-windows-msvc
+            format: zip
+          - runner: ubuntu-24.04
+            target: x86_64-unknown-linux-gnu
+            format: tar.gz
+          - runner: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+            format: tar.gz
+          - runner: macos-15-intel
+            target: x86_64-apple-darwin
+            format: tar.gz
+          - runner: macos-15
+            target: aarch64-apple-darwin
+            format: tar.gz
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: release-${{ matrix.target }}
+      - name: Verify native architecture
+        shell: pwsh
+        run: |
+          $hostTriple = (rustc -vV | Select-String '^host:').Line.Split(':', 2)[1].Trim()
+          if ($hostTriple -ne '${{ matrix.target }}') {
+            throw "runner host $hostTriple does not match ${{ matrix.target }}"
+          }
+      - name: Build server
+        run: cargo build --release -p subconverter-server
+      - name: Assemble release archive
+        shell: pwsh
+        run: |
+          $tag = '${{ github.ref_name }}'
+          $name = "subconverter-rs-$tag-${{ matrix.target }}"
+          $stage = Join-Path $env:RUNNER_TEMP $name
+          New-Item -ItemType Directory -Force -Path $stage | Out-Null
+          Copy-Item -Recurse base (Join-Path $stage 'base')
+          Copy-Item LICENSE,README.md (Join-Path $stage '.')
+          New-Item -ItemType Directory -Force -Path (Join-Path $stage 'docs') | Out-Null
+          Copy-Item docs/SERVICES.md,docs/MIGRATION.md (Join-Path $stage 'docs')
+          $binary = if ($IsWindows) { 'target/release/subconverter-server.exe' } else { 'target/release/subconverter-server' }
+          Copy-Item $binary (Join-Path $stage ([IO.Path]::GetFileName($binary)))
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          if ('${{ matrix.format }}' -eq 'zip') {
+            Compress-Archive -Path $stage -DestinationPath "dist/$name.zip"
+          } else {
+            tar -C $env:RUNNER_TEMP -czf "dist/$name.tar.gz" $name
+          }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.target }}
+          path: dist/*
+          if-no-files-found: error
+
+  publish:
+    name: Publish GitHub release
+    needs: package
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@v5
+        with:
+          pattern: release-*
+          merge-multiple: true
+          path: dist
+      - name: Generate SHA-256 manifest
+        working-directory: dist
+        run: sha256sum subconverter-rs-* > SHA256SUMS
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "${{ github.ref_name }}" dist/* --generate-notes --verify-tag

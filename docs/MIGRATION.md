@@ -9,6 +9,14 @@
 5. Run `.\tools\verify.ps1 -SkipContainer` and compare representative production requests against the pinned reference.
 6. Start the native server, verify `/version`, one local conversion, one remote conversion, HEAD behavior, and response headers, then switch traffic.
 
+For a managed native deployment, extract a release and run
+`subconverter-server service install` from an elevated terminal. It creates a
+minimal secure `pref.toml`; copy reviewed settings into the managed data
+directory and restart. Re-running the install command upgrades the binary and
+official `base/` while preserving configuration, profiles, scripts, and logs.
+See [native service deployment](SERVICES.md) for OS paths and rollback-safe
+uninstallation.
+
 ## Secure defaults
 
 - `api_mode=true`.

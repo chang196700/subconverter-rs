@@ -57,6 +57,27 @@ cargo run -p subconverter-server
 curl http://127.0.0.1:25500/version
 ```
 
+## Native service
+
+Install a system service that starts at boot and starts immediately:
+
+```text
+subconverter-server service install
+subconverter-server service status
+subconverter-server service restart
+subconverter-server service uninstall
+```
+
+Windows uses SCM, Linux uses systemd, and macOS uses launchd. Linux and macOS
+also support `--scope user`; Windows rejects user scope. Re-running `install`
+performs an upgrade while preserving configuration and user data. Uninstall
+removes the service definition but deliberately keeps the program, account,
+and data.
+
+See [native service deployment](docs/SERVICES.md) for platform paths,
+permissions, logs, upgrade behavior, status exit codes, and release integrity
+instructions.
+
 ## CLI
 
 Single target conversion:
