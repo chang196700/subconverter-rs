@@ -1374,12 +1374,7 @@ async fn fetch_remote<I: PlatformIo>(
         return Ok(cached);
     }
     let mut request = FetchRequest::new(url);
-    request.max_bytes = settings.security.max_download_bytes;
-    request.connect_timeout_seconds = settings.security.connect_timeout_seconds;
-    request.request_timeout_seconds = settings.security.request_timeout_seconds;
-    request.max_redirects = settings.security.max_redirects;
-    request.allow_private_network = settings.security.allow_private_network;
-    request.allow_plain_http = settings.security.allow_plain_http;
+    configure_fetch_request(&mut request, settings);
     let fetched = async {
         let fetched = io.fetch(&request).await?;
         if !(200..300).contains(&fetched.status) {
@@ -1411,6 +1406,21 @@ async fn fetch_remote<I: PlatformIo>(
         io.cache_put(namespace, url, &fetched, ttl).await?;
     }
     Ok(fetched)
+}
+
+fn configure_fetch_request(request: &mut FetchRequest, settings: &Settings) {
+    request.max_bytes = settings.security.max_download_bytes;
+    request.connect_timeout_seconds = settings.security.connect_timeout_seconds;
+    request.request_timeout_seconds = settings.security.request_timeout_seconds;
+    request.max_redirects = settings.security.max_redirects;
+    request.allow_private_network = settings.security.allow_private_network;
+    request.allow_plain_http = settings.security.allow_plain_http;
+    if !settings.security.upstream_user_agent.is_empty() {
+        request.headers.insert(
+            "User-Agent".to_string(),
+            settings.security.upstream_user_agent.clone(),
+        );
+    }
 }
 
 fn validate_remote_url(raw: &str, security: &SecuritySettings) -> Result<()> {
@@ -1619,6 +1629,21 @@ mod tests {
         assert_eq!(response.status, 200);
         assert!(response.body.starts_with("subconverter v"));
         assert!(response.body.ends_with(" backend\n"));
+    }
+
+    #[test]
+    fn remote_fetches_omit_user_agent_unless_configured() {
+        let mut request = FetchRequest::new("https://example.com/subscription");
+        configure_fetch_request(&mut request, &Settings::default());
+        assert!(!request.headers.contains_key("User-Agent"));
+
+        let mut settings = Settings::default();
+        settings.security.upstream_user_agent = "SubscriptionClient/1.0".to_string();
+        configure_fetch_request(&mut request, &settings);
+        assert_eq!(
+            request.headers.get("User-Agent").map(String::as_str),
+            Some("SubscriptionClient/1.0")
+        );
     }
 
     #[tokio::test]

@@ -27,14 +27,9 @@ pub struct FetchRequest {
 
 impl FetchRequest {
     pub fn new(url: impl Into<String>) -> Self {
-        let mut headers = BTreeMap::new();
-        headers.insert(
-            "User-Agent".to_string(),
-            format!("subconverter-rs/{}", crate::VERSION),
-        );
         Self {
             url: url.into(),
-            headers,
+            headers: BTreeMap::new(),
             max_bytes: 1_048_576,
             connect_timeout_seconds: 10,
             request_timeout_seconds: 30,
@@ -275,12 +270,9 @@ mod tests {
     use super::FetchRequest;
 
     #[test]
-    fn fetch_requests_use_a_stable_default_user_agent() {
+    fn fetch_requests_do_not_set_a_default_user_agent() {
         let request = FetchRequest::new("https://example.com/subscription");
 
-        assert_eq!(
-            request.headers.get("User-Agent"),
-            Some(&format!("subconverter-rs/{}", crate::VERSION))
-        );
+        assert!(!request.headers.contains_key("User-Agent"));
     }
 }

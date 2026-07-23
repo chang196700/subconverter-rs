@@ -126,6 +126,7 @@ Supported Worker vars/secrets:
 - `API_MODE`
 - `MANAGED_PREFIX`
 - `API_TOKEN`
+- `UPSTREAM_USER_AGENT`
 - `ASSET_KV_BINDING`
 - `CONFIG_KV_BINDING`
 - `CACHE_KV_BINDING`
@@ -135,12 +136,15 @@ Supported Worker vars/secrets:
 ```powershell
 $env:CF_KV_NAMESPACE_ID = "<real namespace id>"
 $env:CF_CUSTOM_DOMAIN = "subconv.example.com"
+$env:CF_UPSTREAM_USER_AGENT = "subconverter-rs/0.1.0"
 .\tools\generate-worker-config.ps1
 .\tools\deploy-worker.ps1
 ```
 
 `CF_CUSTOM_DOMAIN` is optional. When set, the generated config deploys the hostname as a
-Cloudflare Worker Custom Domain.
+Cloudflare Worker Custom Domain. `CF_UPSTREAM_USER_AGENT` is also optional. Remote
+downloads omit `User-Agent` by default for subconverter v0.9.0 compatibility; set this
+variable only when an upstream subscription provider requires a user agent.
 
 Build or check the Worker locally:
 

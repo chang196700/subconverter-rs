@@ -16,6 +16,7 @@ pub struct SecuritySettings {
     pub allowed_local_roots: Vec<String>,
     pub allow_private_network: bool,
     pub allow_plain_http: bool,
+    pub upstream_user_agent: String,
     pub max_download_bytes: usize,
     pub connect_timeout_seconds: u64,
     pub request_timeout_seconds: u64,
@@ -28,6 +29,7 @@ impl Default for SecuritySettings {
             allowed_local_roots: vec!["base".to_string(), "profiles".to_string()],
             allow_private_network: false,
             allow_plain_http: false,
+            upstream_user_agent: String::new(),
             max_download_bytes: 1_048_576,
             connect_timeout_seconds: 10,
             request_timeout_seconds: 30,
@@ -211,6 +213,7 @@ impl Settings {
             || content.contains("emojis:")
             || content.contains("managed_config:")
             || content.contains("template:")
+            || content.contains("security:")
         {
             return Self::parse_yaml(content);
         }
@@ -326,6 +329,9 @@ impl Settings {
         if config_has_any_key(content, &["allow_plain_http"]) {
             merged.security.allow_plain_http = parsed.security.allow_plain_http;
         }
+        if config_has_any_key(content, &["upstream_user_agent"]) {
+            merged.security.upstream_user_agent = parsed.security.upstream_user_agent;
+        }
         if config_has_any_key(content, &["max_download_bytes"]) {
             merged.security.max_download_bytes = parsed.security.max_download_bytes;
         }
@@ -364,6 +370,9 @@ impl Settings {
         if let Some(value) = get_env("ALLOW_PLAIN_HTTP") {
             self.security.allow_plain_http =
                 TriBool::parse(&value).get(self.security.allow_plain_http);
+        }
+        if let Some(value) = get_env("UPSTREAM_USER_AGENT") {
+            self.security.upstream_user_agent = value;
         }
     }
 
@@ -776,6 +785,9 @@ impl Settings {
                 ("security", "allow_plain_http") => {
                     settings.security.allow_plain_http =
                         TriBool::parse(value).get(settings.security.allow_plain_http)
+                }
+                ("security", "upstream_user_agent") => {
+                    settings.security.upstream_user_agent = value.to_string()
                 }
                 ("security", "allowed_local_roots") => {
                     settings.security.allowed_local_roots = split_string_list(value)
@@ -1288,6 +1300,7 @@ proxy_groups:
             ("API_MODE", "true"),
             ("MANAGED_PREFIX", "https://env.example.test"),
             ("API_TOKEN", "env-token"),
+            ("UPSTREAM_USER_AGENT", "SubscriptionClient/1.0"),
         ]);
 
         settings.apply_env(|key| env.get(key).map(|value| (*value).to_string()));
@@ -1297,6 +1310,10 @@ proxy_groups:
         assert!(settings.api_mode);
         assert_eq!(settings.managed_config_prefix, "https://env.example.test");
         assert_eq!(settings.api_access_token, "env-token");
+        assert_eq!(
+            settings.security.upstream_user_agent,
+            "SubscriptionClient/1.0"
+        );
     }
 
     #[test]
@@ -1390,12 +1407,53 @@ proxy_groups:
         );
         assert!(!settings.security.allow_private_network);
         assert!(!settings.security.allow_plain_http);
+        assert!(settings.security.upstream_user_agent.is_empty());
         assert_eq!(settings.security.max_download_bytes, 1_048_576);
         assert_eq!(settings.security.connect_timeout_seconds, 10);
         assert_eq!(settings.security.request_timeout_seconds, 30);
         assert_eq!(settings.security.max_redirects, 5);
         assert_eq!(settings.script_memory_limit_bytes, 16 * 1024 * 1024);
         assert_eq!(settings.script_timeout_millis, 1_000);
+    }
+
+    #[test]
+    fn upstream_user_agent_parses_in_all_formats() {
+        let ini = Settings::parse(
+            "[security]\nupstream_user_agent=IniClient/1.0\n",
+            ConfigFormat::Ini,
+        )
+        .expect("ini should parse");
+        assert_eq!(ini.security.upstream_user_agent, "IniClient/1.0");
+
+        let toml = Settings::parse(
+            "[security]\nupstream_user_agent = \"TomlClient/1.0\"\n",
+            ConfigFormat::Toml,
+        )
+        .expect("toml should parse");
+        assert_eq!(toml.security.upstream_user_agent, "TomlClient/1.0");
+
+        let yaml = Settings::detect_and_parse("security:\n  upstream_user_agent: YAMLClient/1.0\n")
+            .expect("yaml should parse");
+        assert_eq!(yaml.security.upstream_user_agent, "YAMLClient/1.0");
+    }
+
+    #[test]
+    fn upstream_user_agent_overlay_can_set_and_clear_a_pref_value() {
+        let base = Settings {
+            security: SecuritySettings {
+                upstream_user_agent: "PrefClient/1.0".to_string(),
+                ..SecuritySettings::default()
+            },
+            ..Settings::default()
+        };
+
+        let preserved =
+            Settings::overlay("[security]\nmax_redirects = 3\n", &base).expect("overlay");
+        assert_eq!(preserved.security.upstream_user_agent, "PrefClient/1.0");
+
+        let cleared =
+            Settings::overlay("[security]\nupstream_user_agent = \"\"\n", &base).expect("overlay");
+        assert!(cleared.security.upstream_user_agent.is_empty());
     }
 
     #[test]
@@ -1504,6 +1562,9 @@ fn set_toml_security(settings: &mut Settings, section: Option<&toml::Value>) {
     if let Some(value) = section.get("allow_plain_http").and_then(toml_bool) {
         settings.security.allow_plain_http = value;
     }
+    if let Some(value) = section.get("upstream_user_agent").and_then(toml_string) {
+        settings.security.upstream_user_agent = value.to_string();
+    }
     let roots = toml_string_array(section, "allowed_local_roots");
     if !roots.is_empty() {
         settings.security.allowed_local_roots = roots;
@@ -1531,6 +1592,9 @@ fn set_yaml_security(settings: &mut Settings, section: Option<&serde_yaml::Value
     }
     if let Some(value) = section.get("allow_plain_http").and_then(yaml_bool) {
         settings.security.allow_plain_http = value;
+    }
+    if let Some(value) = section.get("upstream_user_agent").and_then(yaml_string) {
+        settings.security.upstream_user_agent = value.to_string();
     }
     let roots = yaml_string_array(section, "allowed_local_roots");
     if !roots.is_empty() {
