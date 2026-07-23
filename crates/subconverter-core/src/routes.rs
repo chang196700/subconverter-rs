@@ -5,8 +5,8 @@ use std::path::{Component, Path};
 use crate::config::{expand_imports_with, import_refs};
 use crate::convert::{
     apply_settings_defaults_to_options, convert_subscription_with_settings,
-    derive_subscription_userinfo, execute_subscription_script, ConvertOptions, ConvertRequest,
-    RuntimeContext, SurgeVersion, Target,
+    derive_subscription_userinfo_with_context, execute_subscription_script, ConvertOptions,
+    ConvertRequest, RuntimeContext, SurgeVersion, Target,
 };
 use crate::io::{FetchRequest, FetchedContent, PlatformIo};
 use crate::model::{RegexMatchConfig, TriBool};
@@ -66,7 +66,16 @@ pub async fn handle_request<I: PlatformIo>(
     settings: &mut Settings,
     request: CoreRequest,
 ) -> CoreResponse {
-    let mut response = match dispatch(io, settings, &request).await {
+    handle_request_with_context(io, settings, request, RuntimeContext::system()).await
+}
+
+pub async fn handle_request_with_context<I: PlatformIo>(
+    io: &I,
+    settings: &mut Settings,
+    request: CoreRequest,
+    context: RuntimeContext,
+) -> CoreResponse {
+    let mut response = match dispatch(io, settings, &request, context).await {
         Ok(mut response) => {
             if request.method == Method::Head {
                 response.body.clear();
@@ -86,6 +95,7 @@ async fn dispatch<I: PlatformIo>(
     io: &I,
     settings: &mut Settings,
     request: &CoreRequest,
+    context: RuntimeContext,
 ) -> Result<CoreResponse> {
     match (request.method, request.path.as_str()) {
         (Method::Get, "/version") => Ok(CoreResponse::text(
@@ -129,11 +139,15 @@ async fn dispatch<I: PlatformIo>(
             io.flush_cache().await?;
             Ok(CoreResponse::text(200, "done"))
         }
-        (Method::Get | Method::Head, "/sub") => sub(io, settings, request).await,
-        (Method::Get, "/sub2clashr") => sub_with_target(io, settings, request, "clashr").await,
-        (Method::Get, "/surge2clash") => sub_with_target(io, settings, request, "clash").await,
+        (Method::Get | Method::Head, "/sub") => sub(io, settings, request, context).await,
+        (Method::Get, "/sub2clashr") => {
+            sub_with_target(io, settings, request, "clashr", context).await
+        }
+        (Method::Get, "/surge2clash") => {
+            sub_with_target(io, settings, request, "clash", context).await
+        }
         (Method::Get, "/getruleset") => get_ruleset(io, settings, request).await,
-        (Method::Get, "/getprofile") => get_profile(io, settings, request).await,
+        (Method::Get, "/getprofile") => get_profile(io, settings, request, context).await,
         (Method::Get, "/render") => render_template(io, settings, request).await,
         (Method::Get, "/get") => {
             require_capability(io.capabilities().raw_fetch_routes, "get")?;
@@ -170,11 +184,12 @@ async fn sub<I: PlatformIo>(
     io: &I,
     settings: &Settings,
     request: &CoreRequest,
+    context: RuntimeContext,
 ) -> Result<CoreResponse> {
     let args = request.query_args();
     let target = args.get("target").ok_or(Error::MissingArgument("target"))?;
     let target = resolve_target_alias(target, request)?;
-    sub_with_target(io, settings, request, &target).await
+    sub_with_target(io, settings, request, &target, context).await
 }
 
 async fn sub_with_target<I: PlatformIo>(
@@ -182,6 +197,7 @@ async fn sub_with_target<I: PlatformIo>(
     settings: &Settings,
     request: &CoreRequest,
     target: &str,
+    context: RuntimeContext,
 ) -> Result<CoreResponse> {
     let args = request.query_args();
     let target = Target::parse(&resolve_target_alias(target, request)?)?;
@@ -242,6 +258,7 @@ async fn sub_with_target<I: PlatformIo>(
                 &effective_settings,
                 local_authorized,
                 scripts_authorized,
+                context,
             )
             .await?
         }
@@ -255,6 +272,7 @@ async fn sub_with_target<I: PlatformIo>(
             &effective_settings,
             true,
             scripts_authorized,
+            context,
         )
         .await?;
         if prepend_insert {
@@ -272,8 +290,9 @@ async fn sub_with_target<I: PlatformIo>(
         .into_iter()
         .map(|source| source.body)
         .collect::<Vec<_>>();
-    let subscription_userinfo = remote_subscription_userinfo
-        .or_else(|| derive_subscription_userinfo(&sources, Some(&effective_settings)));
+    let subscription_userinfo = remote_subscription_userinfo.or_else(|| {
+        derive_subscription_userinfo_with_context(&sources, Some(&effective_settings), context)
+    });
     let surge_version = args
         .get("ver")
         .map(|value| value.parse::<SurgeVersion>())
@@ -288,7 +307,7 @@ async fn sub_with_target<I: PlatformIo>(
     }
     let mut options = convert_options_from_args(&args);
     apply_settings_defaults_to_options(&effective_settings, &mut options);
-    let context = RuntimeContext::system().with_scripts_authorized(scripts_authorized);
+    let context = context.with_scripts_authorized(scripts_authorized);
     let mut output = convert_subscription_with_settings(
         ConvertRequest {
             target,
@@ -675,6 +694,7 @@ async fn resolve_sources<I: PlatformIo>(
     settings: &Settings,
     local_authorized: bool,
     scripts_authorized: bool,
+    context: RuntimeContext,
 ) -> Result<Vec<FetchedContent>> {
     let mut sources = Vec::new();
     for source in raw
@@ -683,7 +703,7 @@ async fn resolve_sources<I: PlatformIo>(
         .filter(|value| !value.is_empty())
     {
         let resolved = if source.starts_with("script:") {
-            resolve_script_subscription(io, settings, source, scripts_authorized).await
+            resolve_script_subscription(io, settings, source, scripts_authorized, context).await
         } else if source.starts_with("http://") || source.starts_with("https://") {
             fetch_remote(io, settings, source, "subscription").await
         } else if source.starts_with("file://") {
@@ -742,6 +762,7 @@ async fn resolve_script_subscription<I: PlatformIo>(
     settings: &Settings,
     source: &str,
     authorized: bool,
+    context: RuntimeContext,
 ) -> Result<FetchedContent> {
     require_capability(io.capabilities().scripts, "subscription scripts")?;
     if !authorized {
@@ -767,7 +788,7 @@ async fn resolve_script_subscription<I: PlatformIo>(
         first,
         remaining,
         settings,
-        RuntimeContext::system().with_scripts_authorized(true),
+        context.with_scripts_authorized(true),
     )?;
     Ok(FetchedContent {
         body,
@@ -1072,6 +1093,7 @@ async fn get_profile<I: PlatformIo>(
     io: &I,
     settings: &Settings,
     request: &CoreRequest,
+    context: RuntimeContext,
 ) -> Result<CoreResponse> {
     let args = request.query_args();
     let profile = args
@@ -1129,7 +1151,7 @@ async fn get_profile<I: PlatformIo>(
         body: String::new(),
         headers: request.headers.clone(),
     };
-    sub(io, settings, &sub_request).await
+    sub(io, settings, &sub_request, context).await
 }
 
 async fn read_profile_content<I: PlatformIo>(io: &I, profile: &str) -> Result<String> {
@@ -1937,6 +1959,38 @@ mod tests {
         assert_eq!(
             response.headers.get("Subscription-UserInfo"),
             Some(&"upload=0; download=1073741824; total=10737418240;".to_string())
+        );
+    }
+
+    #[tokio::test]
+    async fn sub_route_uses_injected_time_for_subscription_expiry() {
+        let io = MemoryIo::default().with_file(
+            "pref.ini",
+            "[userinfo]\ntime_rule=^Expires: (.*)$|left=$1\n",
+        );
+        let mut settings = Settings::default();
+        let source = "ss://YWVzLTEyOC1nY206cGFzcw==@example.com:8388#Expires%3A%202d";
+        let response = handle_request_with_context(
+            &io,
+            &mut settings,
+            CoreRequest {
+                method: Method::Get,
+                path: "/sub".to_string(),
+                query: format!(
+                    "target=clash&url={}&config=pref.ini",
+                    crate::util::url_encode(source)
+                ),
+                body: String::new(),
+                headers: BTreeMap::new(),
+            },
+            RuntimeContext::deterministic(1_000, 7),
+        )
+        .await;
+
+        assert_eq!(response.status, 200);
+        assert_eq!(
+            response.headers.get("Subscription-UserInfo"),
+            Some(&"upload=0; download=0; total=0; expire=173800;".to_string())
         );
     }
 

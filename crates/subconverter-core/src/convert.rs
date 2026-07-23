@@ -1,7 +1,10 @@
 use regex::Regex;
 use std::fmt;
 use std::str::FromStr;
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+#[cfg(feature = "quickjs")]
+use std::time::{Duration, Instant};
+#[cfg(not(target_arch = "wasm32"))]
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::config::Settings;
 use crate::model::RegexMatchConfig;
@@ -122,13 +125,19 @@ pub struct RuntimeContext {
 
 impl RuntimeContext {
     pub fn system() -> Self {
+        #[cfg(not(target_arch = "wasm32"))]
         let unix_time_seconds = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map(|duration| duration.as_secs())
             .unwrap_or(0);
+        #[cfg(target_arch = "wasm32")]
+        let unix_time_seconds = 0;
         Self {
             unix_time_seconds,
+            #[cfg(not(target_arch = "wasm32"))]
             random_seed: unix_time_seconds ^ u64::from(std::process::id()),
+            #[cfg(target_arch = "wasm32")]
+            random_seed: 0,
             scripts_authorized: false,
         }
     }
@@ -197,10 +206,12 @@ pub fn convert_subscription_with_settings(
         return Err(Error::InvalidRequest("No nodes were found!".to_string()));
     }
     let mut options = request.options;
-    let script_limits = settings.as_ref().map(|settings| ScriptLimits {
-        authorized: context.scripts_authorized,
-        memory_limit_bytes: settings.script_memory_limit_bytes,
-        deadline: Instant::now() + Duration::from_millis(settings.script_timeout_millis.max(1)),
+    let script_limits = settings.as_ref().map(|settings| {
+        ScriptLimits::new(
+            context.scripts_authorized,
+            settings.script_memory_limit_bytes,
+            settings.script_timeout_millis,
+        )
     });
     if let Some(settings) = settings.as_ref() {
         ensure_scripts_allowed(settings, context.scripts_authorized)?;
@@ -253,11 +264,11 @@ pub fn execute_subscription_script(
     context: RuntimeContext,
 ) -> Result<String> {
     ensure_scripts_allowed_for_call(context.scripts_authorized)?;
-    let limits = ScriptLimits {
-        authorized: context.scripts_authorized,
-        memory_limit_bytes: settings.script_memory_limit_bytes,
-        deadline: Instant::now() + Duration::from_millis(settings.script_timeout_millis.max(1)),
-    };
+    let limits = ScriptLimits::new(
+        context.scripts_authorized,
+        settings.script_memory_limit_bytes,
+        settings.script_timeout_millis,
+    );
     let value = quickjs_call(
         script,
         "parse",
@@ -283,11 +294,7 @@ pub fn execute_background_script(
     settings: &Settings,
     timeout_millis: u64,
 ) -> Result<()> {
-    let limits = ScriptLimits {
-        authorized: true,
-        memory_limit_bytes: settings.script_memory_limit_bytes,
-        deadline: Instant::now() + Duration::from_millis(timeout_millis.max(1)),
-    };
+    let limits = ScriptLimits::new(true, settings.script_memory_limit_bytes, timeout_millis);
     let script = format!("{script}\nfunction __subconverter_background__() {{ return null; }}");
     quickjs_call(&script, "__subconverter_background__", &[], &limits).map(|_| ())
 }
@@ -469,7 +476,21 @@ fn apply_emoji(
 struct ScriptLimits {
     authorized: bool,
     memory_limit_bytes: usize,
+    #[cfg(feature = "quickjs")]
     deadline: Instant,
+}
+
+impl ScriptLimits {
+    fn new(authorized: bool, memory_limit_bytes: usize, timeout_millis: u64) -> Self {
+        #[cfg(not(feature = "quickjs"))]
+        let _ = timeout_millis;
+        Self {
+            authorized,
+            memory_limit_bytes,
+            #[cfg(feature = "quickjs")]
+            deadline: Instant::now() + Duration::from_millis(timeout_millis.max(1)),
+        }
+    }
 }
 
 fn ensure_scripts_allowed(settings: &Settings, authorized: bool) -> Result<()> {

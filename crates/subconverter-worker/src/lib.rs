@@ -4,8 +4,9 @@ mod cloudflare {
 
     use async_trait::async_trait;
     use subconverter_core::{
-        expand_imports_with, handle_request, import_refs, AdapterCapabilities, CoreRequest, Error,
-        FetchRequest, FetchedContent, Method, PlatformIo, Settings,
+        expand_imports_with, handle_request_with_context, import_refs, AdapterCapabilities,
+        CoreRequest, Error, FetchRequest, FetchedContent, Method, PlatformIo, RuntimeContext,
+        Settings,
     };
     use worker::*;
 
@@ -40,7 +41,9 @@ mod cloudflare {
             .await
             .unwrap_or_else(|_| Settings::default());
         settings.apply_env(|key| worker_var(&env, key));
-        let response = handle_request(&io, &mut settings, request).await;
+        let now_millis = Date::now().as_millis();
+        let context = RuntimeContext::deterministic(now_millis / 1_000, now_millis);
+        let response = handle_request_with_context(&io, &mut settings, request, context).await;
         let mut out = Response::from_bytes(response.body.into_bytes())?;
         out.headers_mut()
             .set("content-type", &response.content_type)?;

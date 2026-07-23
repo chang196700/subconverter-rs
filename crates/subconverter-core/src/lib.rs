@@ -19,6 +19,6 @@ pub use io::{
     AdapterCapabilities, FetchRequest, FetchedContent, MemoryIo, PlatformIo, UploadedContent,
 };
 pub use model::{Proxy, ProxyType, TriBool};
-pub use routes::{handle_request, CoreRequest, CoreResponse, Method};
+pub use routes::{handle_request, handle_request_with_context, CoreRequest, CoreResponse, Method};
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

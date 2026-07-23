@@ -134,9 +134,13 @@ Supported Worker vars/secrets:
 
 ```powershell
 $env:CF_KV_NAMESPACE_ID = "<real namespace id>"
+$env:CF_CUSTOM_DOMAIN = "subconv.example.com"
 .\tools\generate-worker-config.ps1
 .\tools\deploy-worker.ps1
 ```
+
+`CF_CUSTOM_DOMAIN` is optional. When set, the generated config deploys the hostname as a
+Cloudflare Worker Custom Domain.
 
 Build or check the Worker locally:
 
