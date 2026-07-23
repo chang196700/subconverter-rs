@@ -22,7 +22,6 @@ if (-not $AssetDir) {
 }
 $AssetDir = (Resolve-Path $AssetDir).Path
 $workRoot = Join-Path $root "work"
-New-Item -ItemType Directory -Force -Path $workRoot | Out-Null
 $isWindowsHost = $IsWindows -or $env:OS -eq "Windows_NT"
 $smokeId = [guid]::NewGuid().ToString("N")
 if ($Scope -eq "system") {
@@ -35,6 +34,7 @@ if ($Scope -eq "system") {
     }
     $dataDir = Join-Path $cleanupRoot "subconverter-rs-smoke-$smokeId"
 } else {
+    New-Item -ItemType Directory -Force -Path $workRoot | Out-Null
     $cleanupRoot = $workRoot
     $dataDir = Join-Path $workRoot "service-smoke-user-$smokeId"
 }
@@ -165,6 +165,10 @@ try {
         ) {
             throw "refusing to remove unexpected service smoke data: $resolvedData"
         }
-        Remove-Item -LiteralPath $resolvedData -Recurse -Force
+        try {
+            Remove-Item -LiteralPath $resolvedData -Recurse -Force
+        } catch {
+            Write-Warning "service smoke data was preserved because cleanup failed: $_"
+        }
     }
 }

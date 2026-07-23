@@ -764,8 +764,9 @@ fn scope_name(scope: Scope) -> &'static str {
 
 #[cfg(target_os = "linux")]
 fn systemd_unit(scope: Scope, program: &Path, data: &Path) -> String {
-    let program = systemd_quote(program);
-    let data = systemd_quote(data);
+    let program_argument = systemd_exec_quote(program);
+    let data_argument = systemd_exec_quote(data);
+    let data_directive = systemd_directive_path(data);
     let user = if scope == Scope::System {
         "User=subconverter\nGroup=subconverter\n"
     } else {
@@ -777,7 +778,7 @@ fn systemd_unit(scope: Scope, program: &Path, data: &Path) -> String {
         "NoNewPrivileges=true\nPrivateTmp=true\n"
     };
     format!(
-        "[Unit]\nDescription=subconverter-rs subscription conversion service\nWants=network-online.target\nAfter=network-online.target\n\n[Service]\nType=simple\n{user}WorkingDirectory={data}\nExecStart={program} serve --data-dir {data}\nRestart=on-failure\nRestartSec=5\nTimeoutStopSec=30\nKillSignal=SIGTERM\nUMask=0077\n{hardening}ReadWritePaths={data}\n\n[Install]\nWantedBy={}\n",
+        "[Unit]\nDescription=subconverter-rs subscription conversion service\nWants=network-online.target\nAfter=network-online.target\n\n[Service]\nType=simple\n{user}WorkingDirectory={data_directive}\nExecStart={program_argument} serve --data-dir {data_argument}\nRestart=on-failure\nRestartSec=5\nTimeoutStopSec=30\nKillSignal=SIGTERM\nUMask=0077\n{hardening}ReadWritePaths={data_directive}\n\n[Install]\nWantedBy={}\n",
         if scope == Scope::System {
             "multi-user.target"
         } else {
@@ -787,13 +788,32 @@ fn systemd_unit(scope: Scope, program: &Path, data: &Path) -> String {
 }
 
 #[cfg(target_os = "linux")]
-fn systemd_quote(path: &Path) -> String {
+fn systemd_exec_quote(path: &Path) -> String {
     format!(
         "\"{}\"",
         path.to_string_lossy()
             .replace('\\', "\\\\")
             .replace('"', "\\\"")
+            .replace('%', "%%")
     )
+}
+
+#[cfg(target_os = "linux")]
+fn systemd_directive_path(path: &Path) -> String {
+    let mut escaped = String::new();
+    for character in path.to_string_lossy().chars() {
+        match character {
+            '\\' => escaped.push_str("\\\\"),
+            '"' => escaped.push_str("\\x22"),
+            '\'' => escaped.push_str("\\x27"),
+            '%' => escaped.push_str("%%"),
+            value if value.is_ascii_whitespace() || value.is_ascii_control() => {
+                escaped.push_str(&format!("\\x{:02x}", value as u32));
+            }
+            value => escaped.push(value),
+        }
+    }
+    escaped
 }
 
 #[cfg(target_os = "macos")]
@@ -1179,6 +1199,15 @@ mod tests {
         );
         assert!(!user.contains("User=subconverter"));
         assert!(user.contains("WantedBy=default.target"));
+        let spaced = systemd_unit(
+            Scope::User,
+            Path::new("/home/test/My Apps/subconverter-server"),
+            Path::new("/home/test/My State/subconverter-rs"),
+        );
+        assert!(spaced.contains("WorkingDirectory=/home/test/My\\x20State/subconverter-rs"));
+        assert!(spaced.contains(
+            "ExecStart=\"/home/test/My Apps/subconverter-server\" serve --data-dir \"/home/test/My State/subconverter-rs\""
+        ));
     }
 
     #[cfg(target_os = "macos")]
