@@ -965,6 +965,9 @@ fn apply_permissions(scope: Scope, paths: &ServicePaths) -> Result<()> {
     #[cfg(windows)]
     {
         let _ = scope;
+        // Protect only each tree root. The inheritable ACEs then propagate to
+        // descendants; combining `/inheritance:r` with `/T` strips the newly
+        // inherited ACEs again while icacls walks child entries.
         run_checked(
             Command::new("icacls").args([
                 &paths.data.to_string_lossy(),
@@ -973,8 +976,6 @@ fn apply_permissions(scope: Scope, paths: &ServicePaths) -> Result<()> {
                 "*S-1-5-32-544:(OI)(CI)F",
                 "*S-1-5-18:(OI)(CI)F",
                 "*S-1-5-19:(OI)(CI)M",
-                "/T",
-                "/C",
             ]),
             "protect service data directory",
         )?;
@@ -987,8 +988,6 @@ fn apply_permissions(scope: Scope, paths: &ServicePaths) -> Result<()> {
                 "*S-1-5-32-544:(OI)(CI)F",
                 "*S-1-5-18:(OI)(CI)F",
                 "*S-1-5-19:(OI)(CI)RX",
-                "/T",
-                "/C",
             ]),
             "protect service program directory",
         )?;
@@ -1000,8 +999,6 @@ fn apply_permissions(scope: Scope, paths: &ServicePaths) -> Result<()> {
                 "*S-1-5-32-544:(OI)(CI)F",
                 "*S-1-5-18:(OI)(CI)F",
                 "*S-1-5-19:(OI)(CI)RX",
-                "/T",
-                "/C",
             ]),
             "make managed base assets read-only",
         )?;
