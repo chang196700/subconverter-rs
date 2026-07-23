@@ -147,6 +147,25 @@ try {
         throw "uninstall unexpectedly removed persistent data"
     }
     "SERVICE_SMOKE_OK scope=$Scope version=$($version.Content.Trim())"
+} catch {
+    if ($isWindowsHost) {
+        Write-Host "== Windows service diagnostics =="
+        & sc.exe qc subconverter-rs 2>&1 | Write-Host
+        & sc.exe sdshow subconverter-rs 2>&1 | Write-Host
+        & icacls.exe (Join-Path $env:ProgramFiles "subconverter-rs") 2>&1 | Write-Host
+        & icacls.exe $dataDir 2>&1 | Write-Host
+        & whoami.exe /groups 2>&1 | Write-Host
+        Get-WinEvent -FilterHashtable @{
+            LogName = "System"
+            ProviderName = "Service Control Manager"
+            StartTime = (Get-Date).AddMinutes(-5)
+        } -ErrorAction SilentlyContinue |
+            Select-Object -First 10 TimeCreated, Id, LevelDisplayName, Message |
+            Format-List |
+            Out-String |
+            Write-Host
+    }
+    throw
 } finally {
     if ($installed) {
         try {
@@ -171,4 +190,5 @@ try {
             Write-Warning "service smoke data was preserved because cleanup failed: $_"
         }
     }
+    $global:LASTEXITCODE = 0
 }
